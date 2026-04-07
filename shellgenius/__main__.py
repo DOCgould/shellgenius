@@ -71,9 +71,11 @@ def main() -> int:
 
     # chat
     p_chat = sub.add_parser("chat", help="Interactive LLM chat with ShellGenius tools")
+    p_chat.add_argument("--provider", choices=["anthropic", "openai", "local"], default="",
+                        help="LLM provider: anthropic, openai, or local (auto-detected)")
     p_chat.add_argument("--url", default="http://localhost:8082", help="API base URL")
-    p_chat.add_argument("--model", default="claude-sonnet-4-20250514", help="Model to use")
-    p_chat.add_argument("--key", default="test", help="API key")
+    p_chat.add_argument("--model", default="", help="Model name (auto per provider if omitted)")
+    p_chat.add_argument("--key", default="", help="API key (or set ANTHROPIC_API_KEY / OPENAI_API_KEY env var)")
     p_chat.add_argument("--ask", help="Single question (non-interactive)")
 
     # ingest
@@ -109,8 +111,8 @@ def main() -> int:
 
     # --- Chat mode (LLM-powered) ---
     if args.command == "chat":
-        from shellgenius.engine.llm_bridge import ShellGeniusLLM, LLMConfig, interactive_chat
-        config = LLMConfig(base_url=args.url, model=args.model, api_key=args.key)
+        from shellgenius.engine.llm_bridge import ShellGeniusLLM, interactive_chat, _resolve_config
+        config = _resolve_config(args)
         if args.ask:
             llm = ShellGeniusLLM(config=config)
             llm.agent.setup()

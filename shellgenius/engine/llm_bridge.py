@@ -33,33 +33,142 @@ from typing import Any, Optional
 from shellgenius.agent import ShellGeniusAgent, AgentContext
 
 
+# Well-known provider presets
+PROVIDERS = {
+    "anthropic": {
+        "base_url": "https://api.anthropic.com",
+        "model": "claude-sonnet-4-20250514",
+        "context_window": 200_000,
+    },
+    "openai": {
+        "base_url": "https://api.openai.com",
+        "model": "gpt-4o",
+        "context_window": 128_000,
+    },
+    "local": {
+        "base_url": "http://localhost:8082",
+        "model": "claude-sonnet-4-20250514",
+        "context_window": 0,  # probed from backend
+    },
+}
+
+
 @dataclass
 class LLMConfig:
-    """Configuration for the local Anthropic API."""
+    """
+    Configuration for the LLM backend.
+
+    Supports three providers:
+    - "anthropic": Anthropic Messages API (api.anthropic.com)
+    - "openai": OpenAI Chat Completions API (api.openai.com)
+    - "local": Local Anthropic-compatible proxy (localhost:8082 → llama.cpp)
+
+    The provider is auto-detected from the base_url, or set explicitly.
+    """
     base_url: str = "http://localhost:8082"
     api_key: str = "test"
     model: str = "claude-sonnet-4-20250514"
     max_tokens: int = 4096
     anthropic_version: str = "2023-06-01"
-    thinking: bool = False                 # enable thinking/reasoning mode
-    thinking_budget: int = 1024            # max tokens for thinking
-    _context_window: int = 0               # 0 = not yet probed
-    _backend_info: Optional[dict] = None   # cached probe results
+    provider: str = ""                     # "anthropic", "openai", "local" (auto-detected if empty)
+    thinking: bool = False
+    thinking_budget: int = 1024
+    _context_window: int = 0
+    _backend_info: Optional[dict] = None
+
+    def __post_init__(self):
+        if not self.provider:
+            self.provider = self._detect_provider()
+
+    def _detect_provider(self) -> str:
+        if "anthropic.com" in self.base_url:
+            return "anthropic"
+        if "openai.com" in self.base_url:
+            return "openai"
+        return "local"
+
+    @property
+    def is_anthropic(self) -> bool:
+        return self.provider in ("anthropic", "local")
+
+    @property
+    def is_openai(self) -> bool:
+        return self.provider == "openai"
 
     @property
     def context_window(self) -> int:
         if self._context_window > 0:
             return self._context_window
-        self._context_window = _probe_context_window(self.base_url)
+        # For cloud providers, use known context windows
+        if self.provider == "anthropic":
+            self._context_window = 200_000
+        elif self.provider == "openai":
+            self._context_window = _openai_context_window(self.model)
+        else:
+            # Local: probe from backend
+            self._context_window = _probe_context_window(self.base_url)
         return self._context_window
 
     @property
     def backend_info(self) -> dict:
-        """Probe and cache backend information."""
         if self._backend_info is not None:
             return self._backend_info
-        self._backend_info = _probe_backend_info(self.base_url)
+        if self.provider == "local":
+            self._backend_info = _probe_backend_info(self.base_url)
+        else:
+            self._backend_info = {
+                "router_url": self.base_url,
+                "thinking_supported": self.provider == "anthropic",
+                "reasoning_formats": [],
+                "route_mode": "cloud",
+                "local_model": "",
+                "local_url": "",
+                "gguf_file": "",
+                "n_ctx": self._context_window,
+                "speculative": False,
+                "thinking_mechanism": "native" if self.provider == "anthropic" else "",
+            }
         return self._backend_info
+
+    @classmethod
+    def anthropic(cls, api_key: str, model: str = "claude-sonnet-4-20250514") -> "LLMConfig":
+        """Create config for Anthropic cloud API."""
+        return cls(
+            base_url="https://api.anthropic.com",
+            api_key=api_key,
+            model=model,
+            provider="anthropic",
+        )
+
+    @classmethod
+    def openai(cls, api_key: str, model: str = "gpt-4o") -> "LLMConfig":
+        """Create config for OpenAI cloud API."""
+        return cls(
+            base_url="https://api.openai.com",
+            api_key=api_key,
+            model=model,
+            provider="openai",
+        )
+
+    @classmethod
+    def local(cls, base_url: str = "http://localhost:8082", api_key: str = "test") -> "LLMConfig":
+        """Create config for local proxy (llama.cpp, vLLM, etc.)."""
+        return cls(base_url=base_url, api_key=api_key, provider="local")
+
+
+def _openai_context_window(model: str) -> int:
+    """Known context windows for OpenAI models."""
+    if "gpt-4o" in model:
+        return 128_000
+    if "gpt-4-turbo" in model:
+        return 128_000
+    if "gpt-4" in model:
+        return 8_192
+    if "gpt-3.5" in model:
+        return 16_385
+    if "o1" in model or "o3" in model or "o4" in model:
+        return 200_000
+    return 128_000
 
 
 def _probe_context_window(base_url: str) -> int:
@@ -437,7 +546,13 @@ class ShellGeniusLLM:
         return json.dumps(result, indent=2)
 
     def _api_call(self, messages: list[dict], *, tools: Optional[list] = None) -> dict:
-        """Make a raw API call to the local Anthropic endpoint."""
+        """Make an API call. Auto-selects Anthropic or OpenAI format based on provider."""
+        if self.config.is_openai:
+            return self._api_call_openai(messages, tools=tools)
+        return self._api_call_anthropic(messages, tools=tools)
+
+    def _api_call_anthropic(self, messages: list[dict], *, tools: Optional[list] = None) -> dict:
+        """Anthropic Messages API (works for cloud + local proxy)."""
         body: dict[str, Any] = {
             "model": self.config.model,
             "max_tokens": self.config.max_tokens,
@@ -472,6 +587,144 @@ class ShellGeniusLLM:
             return {"error": f"HTTP {e.code}: {error_body}"}
         except urllib.error.URLError as e:
             return {"error": f"Connection failed: {e.reason}"}
+
+    def _api_call_openai(self, messages: list[dict], *, tools: Optional[list] = None) -> dict:
+        """
+        OpenAI Chat Completions API.
+
+        Translates:
+        - Anthropic messages format → OpenAI messages format
+        - Anthropic tool definitions → OpenAI function definitions
+        - OpenAI response → Anthropic response (so the tool-use loop stays the same)
+        """
+        # Convert messages to OpenAI format
+        oai_messages = [{"role": "system", "content": self._system_prompt()}]
+        for msg in messages:
+            role = msg.get("role", "user")
+            content = msg.get("content", "")
+
+            if isinstance(content, str):
+                oai_messages.append({"role": role, "content": content})
+            elif isinstance(content, list):
+                # Handle Anthropic content blocks
+                for block in content:
+                    if isinstance(block, dict):
+                        if block.get("type") == "text":
+                            oai_messages.append({"role": role, "content": block["text"]})
+                        elif block.get("type") == "tool_use":
+                            oai_messages.append({
+                                "role": "assistant",
+                                "tool_calls": [{
+                                    "id": block["id"],
+                                    "type": "function",
+                                    "function": {
+                                        "name": block["name"],
+                                        "arguments": json.dumps(block["input"]),
+                                    },
+                                }],
+                            })
+                        elif block.get("type") == "tool_result":
+                            oai_messages.append({
+                                "role": "tool",
+                                "tool_call_id": block["tool_use_id"],
+                                "content": block["content"],
+                            })
+
+        # Convert tools to OpenAI format
+        oai_tools = None
+        if tools:
+            oai_tools = []
+            for tool in tools:
+                oai_tools.append({
+                    "type": "function",
+                    "function": {
+                        "name": tool.get("name", ""),
+                        "description": tool.get("description", ""),
+                        "parameters": tool.get("input_schema", tool.get("parameters", {})),
+                    },
+                })
+
+        body: dict[str, Any] = {
+            "model": self.config.model,
+            "max_tokens": self.config.max_tokens,
+            "messages": oai_messages,
+        }
+        if oai_tools:
+            body["tools"] = oai_tools
+
+        data = json.dumps(body).encode("utf-8")
+        req = urllib.request.Request(
+            f"{self.config.base_url}/v1/chat/completions",
+            data=data,
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {self.config.api_key}",
+            },
+            method="POST",
+        )
+
+        try:
+            with urllib.request.urlopen(req, timeout=120) as resp:
+                oai_response = json.loads(resp.read())
+        except urllib.error.HTTPError as e:
+            error_body = e.read().decode("utf-8", errors="replace")
+            return {"error": f"HTTP {e.code}: {error_body}"}
+        except urllib.error.URLError as e:
+            return {"error": f"Connection failed: {e.reason}"}
+
+        # Translate OpenAI response → Anthropic format (so tool-use loop works unchanged)
+        return self._openai_to_anthropic_response(oai_response)
+
+    @staticmethod
+    def _openai_to_anthropic_response(oai: dict) -> dict:
+        """Translate an OpenAI Chat Completions response to Anthropic Messages format."""
+        if "error" in oai:
+            return oai
+
+        choice = oai.get("choices", [{}])[0]
+        message = choice.get("message", {})
+        finish_reason = choice.get("finish_reason", "stop")
+
+        content = []
+
+        # Text content
+        if message.get("content"):
+            content.append({"type": "text", "text": message["content"]})
+
+        # Tool calls
+        for tc in message.get("tool_calls", []):
+            func = tc.get("function", {})
+            try:
+                args = json.loads(func.get("arguments", "{}"))
+            except json.JSONDecodeError:
+                args = {}
+            content.append({
+                "type": "tool_use",
+                "id": tc.get("id", ""),
+                "name": func.get("name", ""),
+                "input": args,
+            })
+
+        # Map finish_reason
+        stop_reason = "end_turn"
+        if finish_reason == "tool_calls":
+            stop_reason = "tool_use"
+        elif finish_reason == "length":
+            stop_reason = "max_tokens"
+
+        # Map usage
+        oai_usage = oai.get("usage", {})
+        usage = {
+            "input_tokens": oai_usage.get("prompt_tokens", 0),
+            "output_tokens": oai_usage.get("completion_tokens", 0),
+        }
+
+        return {
+            "content": content,
+            "stop_reason": stop_reason,
+            "usage": usage,
+            "model": oai.get("model", ""),
+        }
 
     def _system_prompt(self) -> str:
         """Build the system prompt for Claude."""
@@ -815,40 +1068,47 @@ def interactive_chat(config: Optional[LLMConfig] = None):
     print_env_info(info)
     ctx_window = llm.config.context_window
     ctx_str = f"{ctx_window // 1000}k" if ctx_window >= 1000 else str(ctx_window)
-    # Probe the real backend info
-    import urllib.request, urllib.error
-    backend_info = ""
-    try:
-        with urllib.request.urlopen(f"{llm.config.base_url}/health", timeout=3) as resp:
-            health = json.loads(resp.read())
-            local_model = health.get("local_model", "")
-            local_url = health.get("local_url", "")
-            if local_model:
-                backend_info = f"  {dim(f'backend: {local_model}')}"
-            if local_url:
-                # Get the real GGUF model name
-                try:
-                    with urllib.request.urlopen(f"{local_url}/v1/models", timeout=3) as mresp:
-                        models = json.loads(mresp.read())
-                        if isinstance(models, dict) and "models" in models:
-                            gguf = models["models"][0].get("model", "")
-                            if gguf:
-                                backend_info = f"  {dim(f'gguf: {gguf}')}"
-                except Exception:
-                    pass
-    except Exception:
-        pass
 
-    print_kv("API", f"{llm.config.base_url}{backend_info}")
-    print_kv("Context", f"{ctx_str} tokens {dim('(from llama.cpp /slots)')}")
-    backend = llm.config.backend_info
-    if backend.get("thinking_supported"):
-        mechanism = backend.get("thinking_mechanism", "unknown")
-        formats = ", ".join(backend.get("reasoning_formats", []))
-        thinking_status = "off" if not llm.config.thinking else f"on (budget: {llm.config.thinking_budget})"
-        print_kv("Thinking", f"{thinking_status}  {dim(f'supported via {mechanism} [{formats}]')}")
+    # Provider-specific display
+    provider = llm.config.provider
+    if provider == "anthropic":
+        print_kv("Provider", f"Anthropic  {dim(f'model: {llm.config.model}')}")
+        print_kv("Context", f"{ctx_str} tokens")
+        print_kv("Thinking", "supported (native extended thinking)" if not llm.config.thinking else f"on (budget: {llm.config.thinking_budget})")
+    elif provider == "openai":
+        print_kv("Provider", f"OpenAI  {dim(f'model: {llm.config.model}')}")
+        print_kv("Context", f"{ctx_str} tokens")
+        print_kv("Thinking", dim("not available (OpenAI)"))
     else:
-        print_kv("Thinking", dim("not supported by this model"))
+        # Local — probe the backend
+        import urllib.request, urllib.error
+        backend_detail = ""
+        try:
+            with urllib.request.urlopen(f"{llm.config.base_url}/health", timeout=3) as resp:
+                health = json.loads(resp.read())
+                local_url = health.get("local_url", "")
+                if local_url:
+                    try:
+                        with urllib.request.urlopen(f"{local_url}/v1/models", timeout=3) as mresp:
+                            models = json.loads(mresp.read())
+                            if isinstance(models, dict) and "models" in models:
+                                gguf = models["models"][0].get("model", "")
+                                if gguf:
+                                    backend_detail = f"  {dim(f'gguf: {gguf}')}"
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+        print_kv("API", f"{llm.config.base_url}{backend_detail}")
+        print_kv("Context", f"{ctx_str} tokens {dim('(from llama.cpp /slots)')}")
+        backend = llm.config.backend_info
+        if backend.get("thinking_supported"):
+            mechanism = backend.get("thinking_mechanism", "unknown")
+            formats = ", ".join(backend.get("reasoning_formats", []))
+            thinking_status = "off" if not llm.config.thinking else f"on (budget: {llm.config.thinking_budget})"
+            print_kv("Thinking", f"{thinking_status}  {dim(f'supported via {mechanism} [{formats}]')}")
+        else:
+            print_kv("Thinking", dim("not supported by this model"))
     print_kv("Tools", f"{len(llm.get_tools())} registered")
 
     if llm.kb:
@@ -973,16 +1233,56 @@ def interactive_chat(config: Optional[LLMConfig] = None):
         print(f"\n{response}\n")
 
 
+def _resolve_config(args) -> LLMConfig:
+    """Build LLMConfig from CLI args + environment variables."""
+    import os
+
+    provider = getattr(args, "provider", "")
+
+    # Auto-detect from --url
+    if not provider:
+        url = getattr(args, "url", "")
+        if "anthropic.com" in url:
+            provider = "anthropic"
+        elif "openai.com" in url:
+            provider = "openai"
+
+    # Provider-specific shortcuts
+    if provider == "anthropic":
+        api_key = getattr(args, "key", "") or os.environ.get("ANTHROPIC_API_KEY", "")
+        if not api_key:
+            print("Error: Set ANTHROPIC_API_KEY or use --key")
+            raise SystemExit(1)
+        model = getattr(args, "model", "") or "claude-sonnet-4-20250514"
+        return LLMConfig.anthropic(api_key=api_key, model=model)
+
+    if provider == "openai":
+        api_key = getattr(args, "key", "") or os.environ.get("OPENAI_API_KEY", "")
+        if not api_key:
+            print("Error: Set OPENAI_API_KEY or use --key")
+            raise SystemExit(1)
+        model = getattr(args, "model", "") or "gpt-4o"
+        return LLMConfig.openai(api_key=api_key, model=model)
+
+    # Default: local
+    url = getattr(args, "url", "http://localhost:8082")
+    key = getattr(args, "key", "test")
+    model = getattr(args, "model", "claude-sonnet-4-20250514")
+    return LLMConfig(base_url=url, api_key=key, model=model)
+
+
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(description="ShellGenius LLM Chat")
+    parser.add_argument("--provider", choices=["anthropic", "openai", "local"], default="",
+                        help="LLM provider (auto-detected from --url or env vars)")
     parser.add_argument("--url", default="http://localhost:8082", help="API base URL")
-    parser.add_argument("--model", default="claude-sonnet-4-20250514", help="Model to use")
-    parser.add_argument("--key", default="test", help="API key")
+    parser.add_argument("--model", default="", help="Model name (default: auto per provider)")
+    parser.add_argument("--key", default="", help="API key (or set ANTHROPIC_API_KEY / OPENAI_API_KEY)")
     parser.add_argument("--ask", help="Single question (non-interactive)")
     args = parser.parse_args()
 
-    config = LLMConfig(base_url=args.url, model=args.model, api_key=args.key)
+    config = _resolve_config(args)
 
     if args.ask:
         llm = ShellGeniusLLM(config=config)
