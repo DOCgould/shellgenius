@@ -90,4 +90,4 @@ Connects to any Anthropic-compatible API (local proxy to llama.cpp/vLLM):
 
 ## License
 
-MIT
+APACHE 2.0
