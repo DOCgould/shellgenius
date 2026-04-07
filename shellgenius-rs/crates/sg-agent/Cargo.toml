@@ -1,0 +1,16 @@
+[package]
+name = "sg-agent"
+description = "ShellGenius agent: orchestrator, 17 tools, tool dispatch"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+sg-core = { workspace = true }
+serde = { workspace = true }
+shlex = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+schemars = { workspace = true }
+tracing = { workspace = true }
+regex-lite = "0.1"

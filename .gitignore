@@ -1,0 +1,35 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+*.egg-info/
+dist/
+build/
+
+# Rust
+shellgenius-rs/target/
+
+# Data (large files — regenerate with shellgenius ingest)
+data/tlpi.pdf
+data/faiss_index/
+*.faiss
+.embeddings/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Pytest
+.pytest_cache/
+
+# Embeddings (generated)
+chunks.json
+chunks.json.gz

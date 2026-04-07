@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.backends._legacy:_Backend"
+
+[project]
+name = "shellgenius"
+version = "0.1.0"
+description = "Expert shell agent for pipe composition, shlex parsing, fd mastery, and cross-shell translation. Runs as an OpenClaw skill on NVIDIA RTX GPUs and DGX Spark."
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.11"
+authors = [
+    { name = "ShellGenius Contributors" },
+]
+keywords = [
+    "shell", "bash", "pipes", "unix", "shlex", "agent",
+    "openclaw", "nvidia", "rtx", "dgx-spark",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Topic :: System :: Shells",
+    "Topic :: Software Development :: Build Tools",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
+
+[project.scripts]
+shellgenius = "shellgenius.__main__:main"
+
+[tool.setuptools.packages.find]
+include = ["shellgenius*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

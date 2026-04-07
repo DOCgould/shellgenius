@@ -1,0 +1,33 @@
+[package]
+name = "shellgenius"
+description = "ShellGenius CLI: expert shell agent for pipes, containers, and dispatch"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "shellgenius"
+path = "src/main.rs"
+
+[dependencies]
+sg-core = { workspace = true }
+sg-agent = { workspace = true }
+sg-ui = { workspace = true }
+sg-knowledge = { workspace = true, optional = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+clap = { workspace = true }
+tokio = { workspace = true }
+reqwest = { workspace = true }
+axum = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+indoc = "2"
+toml = { workspace = true }
+dirs-next = "2"
+shlex = { workspace = true }
+
+[features]
+default = []
+knowledge = ["sg-knowledge/full"]

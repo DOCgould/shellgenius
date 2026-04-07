@@ -1,0 +1,15 @@
+[package]
+name = "sg-core"
+description = "ShellGenius core: types, corpus, pipe algebra, shell executor, containers, dispatch"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+shlex = { workspace = true }
+tracing = { workspace = true }
+wait-timeout = { workspace = true }
+libc = "0.2"
