@@ -79,19 +79,19 @@ def main() -> int:
     p_chat.add_argument("--ask", help="Single question (non-interactive)")
 
     # ingest
-    p_ingest = sub.add_parser("ingest", help="Ingest files/directories into FAISS knowledge base")
+    p_ingest = sub.add_parser("ingest", help="Ingest files/directories into vector knowledge base")
     p_ingest.add_argument("path", help="File or directory to ingest")
     p_ingest.add_argument("--output", help="Custom output directory (overrides default /usr/share/embeddings/)")
 
     # ingest-man
-    p_man = sub.add_parser("ingest-man", help="Ingest man pages into FAISS knowledge base")
+    p_man = sub.add_parser("ingest-man", help="Ingest man pages into vector knowledge base")
     p_man.add_argument("pages", nargs="*", help="Specific pages (e.g., bash grep pipe fork). Omit for --shell preset.")
     p_man.add_argument("--section", "-s", action="append", help="Man section(s) to ingest (e.g., -s 1 -s 2)")
     p_man.add_argument("--shell", action="store_true", help="Ingest curated shell-relevant man pages (~80 pages)")
     p_man.add_argument("--all", action="store_true", help="Ingest ALL pages from specified sections")
 
     # indices
-    sub.add_parser("indices", help="List all registered FAISS knowledge indices")
+    sub.add_parser("indices", help="List all registered vector knowledge indices")
 
     # serve
     p_serve = sub.add_parser("serve", help="Start the OpenClaw skill server")

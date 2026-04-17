@@ -241,7 +241,7 @@ impl ShellGeniusLLM {
         }));
         tools.push(json!({
             "name": "knowledge_ingest",
-            "description": "Ingest a file or directory into the FAISS knowledge base.",
+            "description": "Ingest a file or directory into the vector knowledge base.",
             "input_schema": {"type":"object","properties":{"path":{"type":"string","description":"Path to ingest"}},"required":["path"]},
         }));
         tools.push(json!({
@@ -251,7 +251,7 @@ impl ShellGeniusLLM {
         }));
         tools.push(json!({
             "name": "knowledge_list_indices",
-            "description": "List all registered FAISS knowledge indices.",
+            "description": "List all registered vector knowledge indices.",
             "input_schema": {"type":"object","properties":{}},
         }));
 
@@ -462,7 +462,7 @@ impl ShellGeniusLLM {
             ## Knowledge Tools
             - `knowledge_query` — Search TLPI for syscall-level precision. Don't guess — query.
             - `knowledge_search_all` — Search all ingested knowledge indices.
-            - `knowledge_ingest` — Ingest files/dirs into FAISS.
+            - `knowledge_ingest` — Ingest files/dirs into the vector index.
             - `knowledge_list_indices` — List what's been ingested.
 
             # Rules

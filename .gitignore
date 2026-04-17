@@ -2,8 +2,11 @@
 __pycache__/
 *.pyc
 *.pyo
+.venv
 .venv/
 venv/
+host_venv/
+.claude/
 *.egg-info/
 dist/
 build/
@@ -13,9 +16,14 @@ shellgenius-rs/target/
 
 # Data (large files — regenerate with shellgenius ingest)
 data/tlpi.pdf
+data/tlpi_index/
 data/faiss_index/
+*.scann/
+*.scann.tmp/
 *.faiss
 .embeddings/
+tlpi_chunks.json
+tlpi_stats.json
 
 # IDE
 .vscode/

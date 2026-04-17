@@ -47,7 +47,7 @@ enum Commands {
     },
     /// List available shell tools
     Tools,
-    /// Ingest files/directories into FAISS knowledge base
+    /// Ingest files/directories into vector knowledge base
     Ingest {
         /// File or directory to ingest
         path: String,
@@ -55,7 +55,7 @@ enum Commands {
         #[arg(long)]
         output: Option<String>,
     },
-    /// Ingest man pages into FAISS knowledge base
+    /// Ingest man pages into vector knowledge base
     IngestMan {
         /// Specific page names (e.g., bash grep pipe fork)
         pages: Vec<String>,
@@ -69,7 +69,7 @@ enum Commands {
         #[arg(long)]
         all: bool,
     },
-    /// List all registered FAISS knowledge indices
+    /// List all registered vector knowledge indices
     Indices,
     /// Interactive LLM chat
     Chat {
@@ -297,9 +297,13 @@ async fn main() -> Result<()> {
                             let source = idx.get("source").and_then(|v| v.as_str()).unwrap_or("?");
                             let chunks = idx.get("chunks").and_then(|v| v.as_u64()).unwrap_or(0);
                             let path = idx.get("path").and_then(|v| v.as_str()).unwrap_or("?");
-                            // Check if index file exists
-                            let index_file = std::path::Path::new(path).join("index.faiss");
-                            if index_file.exists() {
+                            // Check if index is complete — ScaNN writes a
+                            // directory of files; scann_config.pb is the
+                            // canonical "fully-serialized" sentinel.
+                            let sentinel = std::path::Path::new(path)
+                                .join("index.scann")
+                                .join("scann_config.pb");
+                            if sentinel.exists() {
                                 print_success(source);
                             } else {
                                 print_warning(&format!("{} (missing)", source));

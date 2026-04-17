@@ -1,5 +1,5 @@
 """
-Knowledge Ingestion — ingest arbitrary documents into ShellGenius's FAISS index.
+Knowledge Ingestion — ingest arbitrary documents into ShellGenius's ScaNN index.
 
 Supports:
 - PDF files
@@ -11,13 +11,13 @@ The ingestion system:
 1. Scans the target path for supported files
 2. Extracts text and chunks it
 3. Embeds chunks with sentence-transformers
-4. Saves a FAISS index + compressed metadata to /usr/share/embeddings/<source-name>/
+4. Saves a ScaNN index + compressed metadata to /usr/share/embeddings/<source-name>/
 5. Writes a pointer in the global index registry so ShellGenius can find it later
 
 Embeddings are grouped by source name under a shared directory:
     /usr/share/embeddings/
     ├── my-project/
-    │   ├── index.faiss           ← FAISS vector index
+    │   ├── index.scann/          ← ScaNN vector index (directory)
     │   ├── chunks.json.gz        ← gzip-compressed chunk text + metadata
     │   ├── manifest.json         ← what was ingested, when, stats
     │   └── .shellgenius-index    ← marker file (for discovery)
@@ -43,17 +43,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
-# Lazy imports for heavy deps
-_faiss = None
+from .vector_index import VectorIndex, build as build_index, is_scann_index
+
 _model = None
-
-
-def _get_faiss():
-    global _faiss
-    if _faiss is None:
-        import faiss
-        _faiss = faiss
-    return _faiss
 
 
 def _get_model():
@@ -73,8 +65,10 @@ SUPPORTED_EXTENSIONS = {
     ".pdf", ".txt", ".md", ".rst", ".org",
     # Code
     ".py", ".sh", ".bash", ".zsh", ".fish",
-    ".js", ".ts", ".go", ".rs", ".c", ".h", ".cpp", ".hpp",
+    ".js", ".ts", ".go", ".rs", ".c", ".h", ".cpp", ".hpp", ".cc", ".cxx", ".hh",
     ".java", ".rb", ".lua", ".pl", ".awk",
+    # HDL / SystemVerilog (for Verilator / hardware co-sim corpora)
+    ".v", ".sv", ".svh", ".vh",
     # Config
     ".yaml", ".yml", ".toml", ".json", ".ini", ".conf",
     ".dockerfile", ".Makefile",
@@ -256,7 +250,10 @@ def _extract_code(path: Path, rel_path: str) -> list[IngestChunk]:
     lang_tag = {
         ".py": "python", ".sh": "bash", ".bash": "bash", ".zsh": "zsh",
         ".js": "javascript", ".ts": "typescript", ".go": "go", ".rs": "rust",
-        ".c": "c", ".h": "c", ".cpp": "cpp", ".java": "java", ".rb": "ruby",
+        ".c": "c", ".h": "c", ".cpp": "cpp", ".hpp": "cpp",
+        ".cc": "cpp", ".cxx": "cpp", ".hh": "cpp",
+        ".java": "java", ".rb": "ruby",
+        ".v": "verilog", ".sv": "systemverilog", ".svh": "systemverilog", ".vh": "verilog",
     }.get(ext, "code")
 
     # Split on function/class definitions (language-aware)
@@ -454,7 +451,7 @@ def ingest(
     show_progress: bool = True,
 ) -> dict:
     """
-    Ingest a file or directory into a FAISS index.
+    Ingest a file or directory into a ScaNN vector index.
 
     Stores embeddings in /usr/share/embeddings/<source-name>/ by default,
     grouped by source name. Falls back to ~/.local/share/shellgenius/embeddings/
@@ -469,7 +466,6 @@ def ingest(
         Stats dict with chunk count, file count, index path, embed_dir.
     """
     import numpy as np
-    faiss = _get_faiss()
     model = _get_model()
 
     target = Path(target).resolve()
@@ -542,14 +538,15 @@ def ingest(
     )
     embeddings = np.array(embeddings, dtype=np.float32)
 
-    # Build FAISS index
+    # Build ScaNN index (adaptive: brute-force for small, tree+AH for large)
     dim = embeddings.shape[1]
-    index = faiss.IndexFlatIP(dim)
-    index.add(embeddings)
+    index = build_index(embeddings)
+    if show_progress:
+        print(f"  Index strategy: {index.strategy} ({index.ntotal} vectors, dim={dim})")
 
     # Save
     embed_dir.mkdir(parents=True, exist_ok=True)
-    faiss.write_index(index, str(embed_dir / "index.faiss"))
+    index.save(embed_dir / "index.scann")
     with gzip.open(embed_dir / "chunks.json.gz", "wt", encoding="utf-8") as f:
         json.dump([c.to_dict() for c in all_chunks], f)
 
@@ -578,7 +575,7 @@ def ingest(
         print(f"\nSaved to {embed_dir}/")
         print(f"  Chunks: {len(all_chunks)}")
         print(f"  Files: {len(files)}")
-        print(f"  Index: {embed_dir / 'index.faiss'}")
+        print(f"  Index: {embed_dir / 'index.scann'}")
 
     return manifest
 
@@ -629,13 +626,13 @@ def _register_index(embed_dir: str, manifest: dict):
 
 
 def list_indices() -> list[dict]:
-    """List all registered FAISS indices."""
+    """List all registered vector indices."""
     registry = _load_registry()
     # Verify each still exists
     valid = []
     for entry in registry["indices"]:
         path = Path(entry["path"])
-        if (path / "index.faiss").exists():
+        if is_scann_index(path / "index.scann"):
             entry["status"] = "ok"
             valid.append(entry)
         else:
@@ -645,11 +642,10 @@ def list_indices() -> list[dict]:
 
 
 def load_index(embed_dir: str | Path) -> tuple:
-    """Load a FAISS index and its chunks. Supports both gzipped and plain chunk files."""
-    faiss = _get_faiss()
+    """Load a ScaNN index and its chunks. Supports both gzipped and plain chunk files."""
     embed_dir = Path(embed_dir)
 
-    index = faiss.read_index(str(embed_dir / "index.faiss"))
+    index = VectorIndex.load(embed_dir / "index.scann")
 
     gz_path = embed_dir / "chunks.json.gz"
     plain_path = embed_dir / "chunks.json"
@@ -671,9 +667,8 @@ def query_index(
     *,
     top_k: int = 5,
 ) -> list[tuple[IngestChunk, float]]:
-    """Query a specific FAISS index."""
+    """Query a specific ScaNN index."""
     import numpy as np
-    faiss = _get_faiss()
     model = _get_model()
 
     index, chunks = load_index(embed_dir)
@@ -789,7 +784,6 @@ def ingest_manpages(
 
     # Extract chunks
     import numpy as np
-    faiss = _get_faiss()
     model = _get_model()
 
     all_chunks: list[IngestChunk] = []
@@ -819,14 +813,15 @@ def ingest_manpages(
     embeddings = model.encode(texts, normalize_embeddings=True, show_progress_bar=show_progress, batch_size=64)
     embeddings = np.array(embeddings, dtype=np.float32)
 
-    # Build index
+    # Build ScaNN index
     dim = embeddings.shape[1]
-    index = faiss.IndexFlatIP(dim)
-    index.add(embeddings)
+    index = build_index(embeddings)
+    if show_progress:
+        print(f"  Index strategy: {index.strategy} ({index.ntotal} vectors, dim={dim})")
 
     # Save
     embed_dir.mkdir(parents=True, exist_ok=True)
-    faiss.write_index(index, str(embed_dir / "index.faiss"))
+    index.save(embed_dir / "index.scann")
     with gzip.open(embed_dir / "chunks.json.gz", "wt", encoding="utf-8") as f:
         json.dump([c.to_dict() for c in all_chunks], f)
 
@@ -853,7 +848,7 @@ def ingest_manpages(
         print(f"\nSaved to {embed_dir}/")
         print(f"  Chunks: {len(all_chunks)}")
         print(f"  Pages: {len(files) - failed}")
-        print(f"  Index: {embed_dir / 'index.faiss'}")
+        print(f"  Index: {embed_dir / 'index.scann'}")
 
     return manifest
 

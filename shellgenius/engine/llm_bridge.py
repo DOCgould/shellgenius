@@ -3,7 +3,7 @@ LLM Bridge — connects ShellGenius tools to a local Anthropic API.
 
 This is the reasoning layer. ShellGenius has:
 - 17 tools (shell, container, dispatch)
-- FAISS knowledge base (1322 chunks from TLPI)
+- ScaNN knowledge base (1322 chunks from TLPI)
 - Pipe algebra, MIME dispatch, socket routing
 
 The LLM bridge lets Claude reason over all of these via tool use:
@@ -11,7 +11,7 @@ The LLM bridge lets Claude reason over all of these via tool use:
     [User question]
         ↓
     [Claude @ localhost:8082 with ShellGenius tools]
-        ↓ tool_use: shell_explain, faiss_query, container_exec, etc.
+        ↓ tool_use: shell_explain, knowledge_query, container_exec, etc.
     [ShellGenius agent handles the tool call]
         ↓ tool_result
     [Claude synthesizes the answer]
@@ -313,7 +313,7 @@ class ShellGeniusLLM:
     """
     LLM-powered ShellGenius agent using the local Anthropic API.
 
-    Connects all 17 ShellGenius tools + FAISS knowledge base to Claude
+    Connects all 17 ShellGenius tools + ScaNN knowledge base to Claude
     via the Anthropic Messages API with tool use.
     """
 
@@ -324,7 +324,7 @@ class ShellGeniusLLM:
     ):
         self.config = config or LLMConfig()
         self.agent = agent or ShellGeniusAgent()
-        self._kb = None  # lazy-loaded FAISS knowledge base
+        self._kb = None  # lazy-loaded TLPI knowledge base
         self._conversation: list[dict] = []
         # Context window tracking
         self._total_input_tokens: int = 0
@@ -350,11 +350,11 @@ class ShellGeniusLLM:
 
     @property
     def kb(self):
-        """Lazy-load the FAISS knowledge base."""
+        """Lazy-load the TLPI knowledge base."""
         if self._kb is None:
             try:
-                from shellgenius.knowledge.faiss_index import FaissKnowledgeBase
-                self._kb = FaissKnowledgeBase.load("data/faiss_index")
+                from shellgenius.knowledge.tlpi_index import TlpiKnowledgeBase
+                self._kb = TlpiKnowledgeBase.load("data/tlpi_index")
             except Exception:
                 self._kb = False  # mark as unavailable
         return self._kb if self._kb is not False else None
@@ -372,7 +372,7 @@ class ShellGeniusLLM:
                 "input_schema": tool["parameters"],
             })
 
-        # Add FAISS query tool
+        # Add knowledge query tool
         if self.kb:
             anthropic_tools.append({
                 "name": "knowledge_query",
@@ -407,7 +407,7 @@ class ShellGeniusLLM:
         anthropic_tools.append({
             "name": "knowledge_ingest",
             "description": (
-                "Ingest a file or directory into the FAISS knowledge base. "
+                "Ingest a file or directory into the vector knowledge base. "
                 "Stores embeddings in /usr/share/embeddings/ grouped by source name. "
                 "Supports: PDF, markdown, text, code files (Python, Bash, Go, Rust, JS, etc.), "
                 "and YAML/JSON/TOML configs. After ingestion, the data is searchable via knowledge_search_all. "
@@ -455,7 +455,7 @@ class ShellGeniusLLM:
         anthropic_tools.append({
             "name": "knowledge_list_indices",
             "description": (
-                "List all registered FAISS knowledge indices. Shows what data has been "
+                "List all registered vector knowledge indices. Shows what data has been "
                 "ingested, where the .embeddings/ directories are, and chunk counts."
             ),
             "input_schema": {
@@ -468,10 +468,10 @@ class ShellGeniusLLM:
 
     def handle_tool(self, name: str, input_: dict) -> str:
         """Handle a tool call and return the result as a string."""
-        # FAISS knowledge query
+        # TLPI knowledge query
         if name == "knowledge_query":
             if not self.kb:
-                return json.dumps({"error": "FAISS knowledge base not available"})
+                return json.dumps({"error": "Knowledge base not available"})
             results = self.kb.query(
                 input_["query"],
                 top_k=input_.get("top_k", 3),
@@ -740,8 +740,8 @@ class ShellGeniusLLM:
             stats = self.kb.stats()
             top_tags = ", ".join(f"{k}({v})" for k, v in list(stats["top_tags"].items())[:8])
             kb_section = f"""
-# Knowledge Base (FAISS)
-You have a FAISS-indexed vector database of "The Linux Programming Interface" by Michael Kerrisk — the definitive 1500-page reference on Linux/UNIX system programming.
+# Knowledge Base (ScaNN)
+You have a ScaNN-indexed vector database of "The Linux Programming Interface" by Michael Kerrisk — the definitive 1500-page reference on Linux/UNIX system programming.
 - {stats['total_chunks']} text chunks across all {stats['chapters_covered']} chapters
 - 384-dimensional embeddings, cosine similarity search
 - Top topic coverage: {top_tags}
@@ -862,7 +862,7 @@ Unix has two dispatch systems: pipes (text streams) and MIME routing (typed cont
 - **`dispatch_introspect`**: Full system introspection — all MIME handlers, active unix sockets, display server, clipboard tools, container runtimes.
   USE WHEN: You need to understand what dispatch routes are available on this system.
 
-## Knowledge Base Tool (FAISS vector search)
+## Knowledge Base Tool (ScaNN vector search)
 
 - **`knowledge_query`**: Search TLPI for precise Linux internals knowledge.
   USE WHEN: You need syscall-level precision. Don't guess — query.
@@ -1114,7 +1114,7 @@ def interactive_chat(config: Optional[LLMConfig] = None):
     if llm.kb:
         print_kb_info(llm.kb.stats())
     else:
-        print_kv("Knowledge", dim("FAISS index not found (run: python -m shellgenius.knowledge.faiss_index)"))
+        print_kv("Knowledge", dim("TLPI index not found (run: python -m shellgenius.knowledge.tlpi_index)"))
 
     status_ok("Ready")
     print_chat_help()

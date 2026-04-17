@@ -1,6 +1,6 @@
 [build-system]
 requires = ["setuptools>=68.0", "wheel"]
-build-backend = "setuptools.backends._legacy:_Backend"
+build-backend = "setuptools.build_meta"
 
 [project]
 name = "shellgenius"
@@ -24,6 +24,14 @@ classifiers = [
     "Topic :: Software Development :: Build Tools",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+]
+# ScaNN only ships Linux x86_64 wheels; the env marker makes install fail
+# cleanly on unsupported platforms rather than dragging in a broken dep.
+dependencies = [
+    "scann>=1.3,<1.4 ; sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "sentence-transformers>=2.2",
+    "numpy>=1.24",
+    "PyMuPDF>=1.23",
 ]
 
 [project.scripts]

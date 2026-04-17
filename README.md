@@ -1,6 +1,6 @@
 # ShellGenius
 
-Expert shell agent for pipe composition, container sandboxing, MIME dispatch, and FAISS-powered knowledge retrieval. Runs as a CLI tool and an OpenClaw skill server, connecting to local LLMs via the Anthropic API.
+Expert shell agent for pipe composition, container sandboxing, MIME dispatch, and ScaNN-powered knowledge retrieval. Runs as a CLI tool and an OpenClaw skill server, connecting to local LLMs via the Anthropic API.
 
 ## Architecture
 
@@ -24,15 +24,16 @@ tests/                56 Python tests
 - **Pipe Algebra**: Type-checked pipeline composition (TEXT, JSON, TSV, NULL_DELIM streams)
 - **Container Sandboxing**: 5 profiles from NONE to LOCKED (read-only fs, no network, cap-drop ALL)
 - **MIME Dispatch**: Bridge pipes to desktop apps via xdg-open, clipboard, DBus notifications
-- **FAISS Knowledge**: Vector search over TLPI (1,322 chunks) and ingested man pages
+- **ScaNN Knowledge**: Adaptive vector search (brute-force for small corpora, tree+AH for million-scale codebases like the Linux kernel) over TLPI (1,322 chunks) and ingested man pages
 - **Context Tracking**: Probes llama.cpp `/slots` for real `n_ctx`, shows usage in prompt
 - **Thinking Mode**: Detects `enable_thinking` in chat template, toggleable via `/think`
 
 ## Quick Start (Python)
 
 ```bash
+# Requires Linux x86_64 and Python 3.11 or 3.12 (ScaNN constraints).
 python -m venv .venv && source .venv/bin/activate
-pip install faiss-cpu pymupdf sentence-transformers
+pip install scann pymupdf sentence-transformers
 
 # Explain a pipeline
 python -m shellgenius explain "find . -name '*.log' -print0 | xargs -0 grep -l ERROR | sort"
@@ -86,7 +87,7 @@ Connects to any Anthropic-compatible API (local proxy to llama.cpp/vLLM):
 - **System prompt** (~1,500 words) with USE WHEN triggers for each tool
 - **Context window** probed from live backend (`/health` -> `/slots` -> `n_ctx`)
 - **Thinking mode** detected from chat template, toggled with `/think` and `/nothink`
-- **Watchdog UI** shows tool calls, FAISS queries, and token usage on stderr
+- **Watchdog UI** shows tool calls, vector queries, and token usage on stderr
 
 ## License
 

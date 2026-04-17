@@ -1,11 +1,11 @@
 """
-FAISS Knowledge Base — vector search over The Linux Programming Interface.
+TLPI Knowledge Base — ScaNN-backed vector search over The Linux Programming Interface.
 
 This module:
 1. Extracts text from the TLPI PDF by chapter
 2. Chunks text into semantically meaningful segments
 3. Embeds chunks using sentence-transformers (all-MiniLM-L6-v2, 384-dim)
-4. Builds a FAISS index for fast similarity search
+4. Builds a ScaNN index for fast similarity search
 5. Provides a query interface for the ShellGenius agent
 
 The index gives the agent deep syscall/kernel knowledge:
@@ -17,7 +17,7 @@ Architecture:
     [User query: "how do named pipes work?"]
         ↓ embed
     [384-dim vector]
-        ↓ FAISS search
+        ↓ ScaNN search
     [Top-K chunk IDs]
         ↓ retrieve
     [TLPI text: "Chapter 44: Pipes and FIFOs..."]
@@ -34,18 +34,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
+from .vector_index import VectorIndex, build as build_index
+
 # Lazy imports — these are heavy
-_faiss = None
 _fitz = None
 _model = None
-
-
-def _get_faiss():
-    global _faiss
-    if _faiss is None:
-        import faiss
-        _faiss = faiss
-    return _faiss
 
 
 def _get_fitz():
@@ -330,22 +323,22 @@ def _auto_tag(text: str) -> list[str]:
 
 
 # ---------------------------------------------------------------------------
-# FAISS index building
+# ScaNN index building
 # ---------------------------------------------------------------------------
 
 @dataclass
-class FaissKnowledgeBase:
+class TlpiKnowledgeBase:
     """
-    FAISS-backed knowledge base for The Linux Programming Interface.
+    ScaNN-backed knowledge base for The Linux Programming Interface.
 
     Usage:
-        kb = FaissKnowledgeBase.build("data/tlpi.pdf")
+        kb = TlpiKnowledgeBase.build("data/tlpi.pdf")
         results = kb.query("how do named pipes work?", top_k=5)
         for chunk, score in results:
             print(f"[Ch.{chunk.chapter_num}] {chunk.chapter_title} (score: {score:.3f})")
             print(chunk.text[:200])
     """
-    index: object  # faiss.Index
+    index: VectorIndex
     chunks: list[TextChunk]
     embedding_dim: int = 384
     model_name: str = "all-MiniLM-L6-v2"
@@ -366,7 +359,6 @@ class FaissKnowledgeBase:
             List of (chunk, score) tuples, sorted by relevance.
         """
         import numpy as np
-        faiss = _get_faiss()
         model = _get_model()
 
         # Embed the query
@@ -417,27 +409,22 @@ class FaissKnowledgeBase:
 
     def save(self, directory: str | Path) -> None:
         """Save index and metadata to disk."""
-        faiss = _get_faiss()
         directory = Path(directory)
         directory.mkdir(parents=True, exist_ok=True)
 
-        # Save FAISS index
-        faiss.write_index(self.index, str(directory / "tlpi.faiss"))
+        self.index.save(directory / "tlpi.scann")
 
-        # Save chunk metadata
         metadata = [c.to_dict() for c in self.chunks]
         (directory / "tlpi_chunks.json").write_text(json.dumps(metadata, indent=2))
 
-        # Save stats
         (directory / "tlpi_stats.json").write_text(json.dumps(self.stats(), indent=2))
 
     @classmethod
-    def load(cls, directory: str | Path) -> "FaissKnowledgeBase":
+    def load(cls, directory: str | Path) -> "TlpiKnowledgeBase":
         """Load a saved index from disk."""
-        faiss = _get_faiss()
         directory = Path(directory)
 
-        index = faiss.read_index(str(directory / "tlpi.faiss"))
+        index = VectorIndex.load(directory / "tlpi.scann")
 
         metadata = json.loads((directory / "tlpi_chunks.json").read_text())
         chunks = [
@@ -457,9 +444,9 @@ class FaissKnowledgeBase:
     @classmethod
     def build(cls, pdf_path: str | Path, *,
               priority_only: bool = False,
-              show_progress: bool = True) -> "FaissKnowledgeBase":
+              show_progress: bool = True) -> "TlpiKnowledgeBase":
         """
-        Build the FAISS index from the TLPI PDF.
+        Build the ScaNN index from the TLPI PDF.
 
         Args:
             pdf_path: Path to The Linux Programming Interface PDF.
@@ -467,10 +454,9 @@ class FaissKnowledgeBase:
             show_progress: Print progress during indexing.
 
         Returns:
-            FaissKnowledgeBase ready for queries.
+            TlpiKnowledgeBase ready for queries.
         """
         import numpy as np
-        faiss = _get_faiss()
         model = _get_model()
 
         if show_progress:
@@ -501,15 +487,13 @@ class FaissKnowledgeBase:
         embeddings = np.array(embeddings, dtype=np.float32)
 
         if show_progress:
-            print(f"Building FAISS index...")
+            print(f"Building ScaNN index...")
 
-        # Build index — use IndexFlatIP for cosine similarity (vectors are normalized)
         dim = embeddings.shape[1]
-        index = faiss.IndexFlatIP(dim)
-        index.add(embeddings)
+        index = build_index(embeddings)
 
         if show_progress:
-            print(f"Done. Index has {index.ntotal} vectors of dimension {dim}.")
+            print(f"Done. Index has {index.ntotal} vectors of dimension {dim} (strategy={index.strategy}).")
 
         return cls(index=index, chunks=chunks, embedding_dim=dim)
 
@@ -519,10 +503,10 @@ class FaissKnowledgeBase:
 # ---------------------------------------------------------------------------
 
 def build_and_save(pdf_path: str = "data/tlpi.pdf",
-                   output_dir: str = "data/faiss_index",
-                   priority_only: bool = False) -> FaissKnowledgeBase:
+                   output_dir: str = "data/tlpi_index",
+                   priority_only: bool = False) -> TlpiKnowledgeBase:
     """Build the index and save to disk."""
-    kb = FaissKnowledgeBase.build(pdf_path, priority_only=priority_only)
+    kb = TlpiKnowledgeBase.build(pdf_path, priority_only=priority_only)
     kb.save(output_dir)
     print(f"\nSaved to {output_dir}/")
     stats = kb.stats()
@@ -535,6 +519,6 @@ def build_and_save(pdf_path: str = "data/tlpi.pdf",
 if __name__ == "__main__":
     import sys
     pdf = sys.argv[1] if len(sys.argv) > 1 else "data/tlpi.pdf"
-    out = sys.argv[2] if len(sys.argv) > 2 else "data/faiss_index"
+    out = sys.argv[2] if len(sys.argv) > 2 else "data/tlpi_index"
     priority = "--priority" in sys.argv
     build_and_save(pdf, out, priority_only=priority)
